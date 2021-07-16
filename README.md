@@ -1,5 +1,5 @@
 # a bad sat solver
-在BCP上做2-literal watching去檢查clause，  
-遇到矛盾時做FirstUIP製造新clause並且non-chronological backtracking，  
-利用VSIDS去挑下一個給值的變數。我覺得蠻有趣的一個實作，  
-SAT solver只能解到1000個以內的變數，效能有待加強。
+Do BCP with using 2-literal watching to check each clauses.    
+When occuring conflict,do FirstUIP to generate a new clause and non-chronological backtracking.    
+Pick next variable and give it a value by using VSIDS.  
+I think it's interesting, it can be reinforce step by step. But my SAT solver can only solve small problems(less than about 1000 variable), the efficient should be reinforce.   
