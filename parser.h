@@ -58,7 +58,7 @@ void parse_DIMACS_CNF(vector<vector<int> > &clauses,
 
 
 /*********************************************************************
-  
+
 Our CNF parser is adapted from:
 
 MiniSat -- Copyright (c) 2003-2005, Niklas Een, Niklas Sorensson

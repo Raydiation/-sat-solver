@@ -1,464 +1,437 @@
 #include<bits/stdc++.h>
-#include "parser.h"
+#include "parser.cpp"
 using namespace std;
 
-const int maxn = 2e5;
-const int maxcla = 1e6;
-const double decay_con = 1.2;
-const double pick_decay = 1;
-const int SD_size = 100;
-
-struct Decide { int var, state, depth; };
-
-vector<vector<int> >clauses;
-vector<int> pos_watch[maxn];
-vector<int> neg_watch[maxn];
-vector<Decide> decide;
-int maxIdx;
-int Cnt;
-int res[maxn];//-1 is undecided,assigned 0 or 1
-int dep[maxn];//The depth of i be decided.
-int watching[maxcla][2];//The watched index for each clauses
-int antecedent[maxn];
-int d_o[maxn];//decision order;
-double vs[maxn * 2];//+-+-+-+-+-....
-
-bool cmp(int a, int b) { return abs(a) < abs(b); }
-bool cmp2(vector<int> a, vector<int> b) { return a.size() < b.size(); }
-
-int Val(int lit)
+bool compare(int a,int b)
 {
-    if (res[abs(lit)] == -1)return -1;
-    if ((res[abs(lit)] == 0 && lit < 0) || (res[abs(lit)] == 1 && lit > 0))return 1;
+    if(abs(a)==abs(b))return a<b;
+    return abs(a)<abs(b);
+}
+
+struct Assigned
+{
+    int value;//0 or 1
+    int depth;//in which layer
+    int order;
+};
+
+//literal have sign, variable does not.
+class sat_solver
+{
+public:
+    sat_solver(vector<vector<int>> Clauses,int Maxindex,double Decay_constant,int Max_clause_size)
+    {
+        clauses = Clauses;
+        maxindex = Maxindex;
+        find_clauses.clear();
+        positive_watch = vector<vector<int>> (maxindex+5);
+        negative_watch = vector<vector<int>> (maxindex+5);
+        two_literal_watching = vector<vector<int>> (clauses.size());
+        antecedent = vector<vector<int>> (maxindex+5);
+        assignment = vector<Assigned> (maxindex+5,{-1,-1,-1});
+        single_literal.clear();
+        vsids_value = vector<double> (maxindex*2+5,0);
+        assigned_number = 0;
+        decay_constant = Decay_constant;
+        max_clause_size=Max_clause_size;
+
+    }
+    int valued(int);
+    void vsids_value_decay();
+    int vsids_pick();
+    vector<int> tidy_up_clause(vector<int>);
+    vector<int> resolve_clauses(vector<int>,vector<int>,int);
+    bool prepare();
+    int FirstUIP(vector<int>,int);
+    int add_new_clause(vector<int>);
+    void backtrack(int);
+    int four_case(int,int);
+    int BCP(int,int);
+    int DPLL(int,int);
+    bool check_solve();
+
+    map<vector<int>,int> find_clauses;
+    vector<vector<int>> clauses;
+    vector<vector<int>> positive_watch;
+    vector<vector<int>> negative_watch;
+    vector<vector<int>> two_literal_watching; //store the index of watching literal
+    vector<vector<int>> antecedent;//what clause imply the variable
+    vector<Assigned> assignment;
+    vector<int> single_literal;
+    vector<double> vsids_value;
+
+    int maxindex;
+    int assigned_number;
+
+    double decay_constant;
+    int max_clause_size;
+};
+
+int sat_solver::valued(int literal)//OK
+{
+    if(assignment[abs(literal)].value==-1)return -1;
+    if(assignment[abs(literal)].value==0&&literal<0)return 1;
+    if(assignment[abs(literal)].value==1&&literal>0)return 1;
     return 0;
 }
-void vs_decay()
-{
-    for (int i = 1; i <= maxIdx * 2; i++)vs[i] /= decay_con;
-    return;
-}
-int vsids()
-{
-    double _max = -1;
-    int var = 0;
-    for (int i = 1; i <= maxIdx; i++)
-    {
-        if (res[i] != -1)continue;
-        else
-            for (int j = 0; j < 2; j++)
-                if (vs[i * 2 - j] - _max > 1e-9)
-                {
-                    _max = vs[i * 2 - j];
-                    j == 0 ? var = -i : var = i;
-                }
-    }
-    var < 0 ? vs[abs(var) * 2] /= pick_decay : vs[abs(var) * 2 - 1] /= pick_decay;
-    return var;
-}
-void init()
-{
-    decide.clear();
-    clauses.clear();
-    for (int i = 0; i < maxn; i++)
-    {
-        pos_watch[i].clear();
-        neg_watch[i].clear();
-    }
 
-    memset(res, -1, sizeof(res));
-    memset(dep, 0, sizeof(dep));
-    memset(watching, -1, sizeof(watching));
-    memset(antecedent, -1, sizeof(antecedent));
-    memset(d_o, -1, sizeof(d_o));
-    memset(vs, 0, sizeof(vs));
-    Cnt = 0;
-    return;
+void sat_solver::vsids_value_decay()//OK
+{
+    for(int i=1;i<=maxindex*2;i++)
+        vsids_value[i]/=decay_constant;
 }
 
-vector<int> presolve(vector<int> c_1)
+int sat_solver::vsids_pick()//OK
 {
-    vector<int> c_p, mt;
-    mt.clear();
-    sort(c_1.begin(), c_1.end(), cmp);
-
-    c_p.push_back(c_1[0]);
-    for (int i : c_1)
+    int candidate_variable=0;
+    for(int i=1;i<=maxindex*2;i++)
     {
-        if (i == c_p.back())continue;
-        if (i == -c_p.back())return mt;
-        c_p.push_back(i);
-    }
-    return c_p;
-}
-
-int prepare()
-{
-    vector<int> pre_assigned;
-    for (int i = clauses.size() - 1; i >= 0; i--)
-    {
-        clauses[i] = presolve(clauses[i]);
-        if (clauses[i].size() == 0) clauses.erase(clauses.begin() + i);
-    }
-    sort(clauses.begin(), clauses.end(), cmp2);
-    while (clauses[0].size() == 1)
-    {
-        vector<int> tmp = clauses[0];
-        if (Val(tmp[0]) == 0)return 0;
-        else
+        if(assignment[(i+1)/2].value==-1) //unassigned
         {
-            if (Val(tmp[0]) == -1)
+            if(vsids_value[i]>vsids_value[candidate_variable])
+                candidate_variable=i;
+        }
+    }
+    if(candidate_variable%2) return (candidate_variable+1)/2;
+    return -(candidate_variable+1)/2;
+}
+
+vector<int> sat_solver::tidy_up_clause(vector<int> clause)//OK
+{
+    vector<int> simply_clause;
+    sort(clause.begin(),clause.end(),compare);
+    simply_clause.push_back(clause[0]);
+    for(int num:clause)
+    {
+        if(num==simply_clause.back())continue;// repeated
+        if(num==-simply_clause.back()) return vector<int>();// always true
+        simply_clause.push_back(num);
+    }
+    sort(simply_clause.begin(),simply_clause.end(),compare);
+    return simply_clause;
+}
+
+vector<int> sat_solver::resolve_clauses(vector<int> clause_1,vector<int> clause_2,int resolve_variable)//OK
+{
+    vector<int> new_clause;
+    for(int num:clause_1)
+        if(abs(num)!=resolve_variable)
+            new_clause.push_back(num);
+    for(int num:clause_2)
+        if(abs(num)!=resolve_variable)
+            new_clause.push_back(num);
+
+    return tidy_up_clause(new_clause);
+}
+
+bool sat_solver::prepare()//OK
+{
+    // tidy up each clause
+    for(int i=clauses.size()-1;i>=0;i--)
+    {
+        clauses[i]=tidy_up_clause(clauses[i]);
+        if(clauses[i].empty())
+            clauses.erase(clauses.begin()+i);
+        else if(clauses[i].size()==1)
+        {
+            if(valued(clauses[i][0])==0)//conflict
+                return 0;
+            else //fix the value of this variable
             {
-                pre_assigned.push_back(tmp[0]);
-                tmp[0] < 0 ? res[abs(tmp[0])] = 0 : res[abs(tmp[0])] = 1;
+                single_literal.push_back(clauses[i][0]);
             }
-            clauses.erase(clauses.begin() + 0);
+            clauses.erase(clauses.begin()+i);
         }
     }
-    for (int pre : pre_assigned)
-        pre < 0 ? decide.push_back({ abs(pre),0,1 }) : decide.push_back({ abs(pre),1,1 });
-
-    for (int i = 0; i < clauses.size(); i++)
-        for (int j = 0; j < 2; j++)
-        {
-            watching[i][j] = j;
-            clauses[i][j] < 0 ? neg_watch[abs(clauses[i][j])].push_back(i) : pos_watch[abs(clauses[i][j])].push_back(i);
-        }
-    for (vector<int> C : clauses)
-        for (int lit : C)
-        {
-            if (lit < 0)vs[abs(lit) * 2] += 1;
-            else vs[abs(lit) * 2 - 1] += 1;
-        }
-
-    return 1;
-}
-int check_sol()
-{
-    int ans = 1;
-    for (int i = 0; i < clauses.size() && ans == 1; i++)
-        ans = ans & ((Val(clauses[i][watching[i][0]]) == 1) || (Val(clauses[i][watching[i][1]])) == 1);
-    return ans;
-}
-vector<int> resolve(vector<int> c_1, vector<int> c_2)
-{
-    vector<int> c, c_p;
-    for (int i : c_1)c.push_back(i);
-    for (int i : c_2)c.push_back(i);
-    sort(c.begin(), c.end(), cmp);
-
-    int takeout = 0;
-    c_p.push_back(c[0]);
-    for (int i : c)
+    //set watching, each clause has at least two literal
+    for(int i=0;i<clauses.size();i++)
     {
-        if (i == c_p.back())continue;
-        if (i == -c_p.back())
+        vector<int> clause = clauses[i];
+        find_clauses[clause] = 1;
+        for(int j=0;j<2;j++)
         {
-            takeout = 1;
-            continue;
+            two_literal_watching[i].push_back(j);
+            if(clause[j]<0) negative_watch[abs(clause[j])].push_back(i);
+            if(clause[j]>0) positive_watch[abs(clause[j])].push_back(i);
         }
-        if (takeout)c_p.pop_back();
-        takeout = 0;
-        c_p.push_back(i);
     }
-    if (takeout)c_p.pop_back();
-    return c_p;
-}
-
-int compare(vector<int> C1, vector<int> C2)
-{
-    if (C1.size() != C2.size())return 0;
-    sort(C1.begin(), C1.end());
-    sort(C2.begin(), C2.end());
-    for (int i = 0; i < C1.size(); i++)
-        if (C1[i] != C2[i])
-            return 0;
+    //update VSIDS value
+    for(vector<int> clause:clauses)
+        for(int literal:clause)
+            (literal>0)?vsids_value[abs(literal)*2-1]+=1:vsids_value[abs(literal)*2]+=1;
     return 1;
 }
 
-int Addcla(vector<int> C, int depth)
+int sat_solver::FirstUIP(vector<int> conflict_clause,int current_depth)
 {
-    C = presolve(C);
-    if (C.size() == 0)return 0;
-    if (C.size() == 1)
+    /*cout<<"FirstUIP   :";
+    for(int num:conflict_clause)cout<<num<<" ";
+    cout<<"\n\n";*/
+    while(1)//page 70
     {
-        if (Val(C[0]) == 0 && dep[C[0]] == 1)return 0;
-        if (Val(C[0]) == 1)return 1;
-        C[0] < 0 ? decide.push_back({ abs(C[0]),0,1 }) : decide.push_back({ abs(C[0]),1,1 });
-        return 1;
+        int current_depth_assigned = 0;
+        for(int literal:conflict_clause)
+            if(assignment[abs(literal)].value!=-1&&assignment[abs(literal)].depth==current_depth)
+                current_depth_assigned++;
+
+        if(current_depth_assigned<=1)
+            break;
+
+        int last_assigned=abs(conflict_clause[0]);
+        for(int i=0;i<conflict_clause.size();i++)
+        {
+            if(assignment[abs(conflict_clause[i])].order>assignment[last_assigned].order)
+                last_assigned=abs(conflict_clause[i]);
+        }
+        conflict_clause = resolve_clauses(conflict_clause,antecedent[last_assigned],last_assigned);
     }
+    if(conflict_clause.empty())return -1;//conflict (?)
 
-    for (vector<int> C_p : clauses)
-        if (compare(C_p, C))return depth;
+    return add_new_clause(conflict_clause);
+}
 
-    vs_decay();
-    for (int lit : C)
-        lit < 0 ? vs[abs(lit) * 2] += 1 : vs[abs(lit) * 2 - 1] += 1;
-
-    if (C.size() > SD_size)return depth;
-
-    clauses.push_back(C);
-    int idx = clauses.size() - 1;
-    int lit, w_cnt = 0;
-    for (int i = 0; i < clauses[idx].size() && w_cnt < 2; i++)
+int sat_solver::add_new_clause(vector<int> new_clause)
+{
+    if(new_clause.size()==1)//imply a fixed variable
     {
-        lit = clauses[idx][i];
-        if (Val(lit) == 0 && dep[abs(lit)] < depth)continue;//Val==0 before the depth we'll backtrack
-        watching[idx][w_cnt] = i;
-        lit < 0 ? neg_watch[abs(lit)].push_back(idx) : pos_watch[abs(lit)].push_back(idx);
-        w_cnt++;
+        backtrack(0);
+        single_literal.push_back(new_clause[0]);
+        return 0;//backtrack to initial
     }
+    /*if(new_clause.size()>max_clause_size)
+    {
+        //this clause is too large.
+    }*/
+    //find second deepest and backtrack
+    int deepest=0;
+    int second_deepest=0;
+    for(int num:new_clause)
+        deepest = max(deepest,assignment[abs(num)].depth);
+    for(int num:new_clause)
+        if(assignment[abs(num)].depth!=deepest&&assignment[abs(num)].depth>second_deepest)
+            second_deepest=assignment[abs(num)].depth;
+    backtrack(second_deepest);
+    //add new clause
+    sort(new_clause.begin(),new_clause.end(),compare);
+    if(!find_clauses[new_clause])
+    {
+        find_clauses[new_clause]=1;
+        clauses.push_back(new_clause);
+        two_literal_watching.push_back(vector<int>());
+        for(int i=0,watching_count=0;i<new_clause.size(),watching_count<2;i++)
+        {
+            if(valued(new_clause[i])!=0)
+            {
+                two_literal_watching[clauses.size()-1].push_back(i);
+                if(new_clause[i]<0)
+                    negative_watch[abs(new_clause[i])].push_back(clauses.size()-1);
+                else
+                    positive_watch[abs(new_clause[i])].push_back(clauses.size()-1);
+                watching_count++;
+            }
+        }
+    }
+    return second_deepest-1;
+}
 
+void sat_solver::backtrack(int goal_layer)//OK?
+{
+    //cout<<"backtrack to "<<goal_layer<<"\n\n";
+    for(int num=1;num<=maxindex;num++)
+    {
+        if(assignment[num].depth>=goal_layer)// >?>=?
+        {
+            assigned_number--;
+            assignment[num]={-1,-1,-1};
+            antecedent[num]=vector<int>();
+        }
+    }
+}
+
+int sat_solver::four_case(int clause_index,int assigned_literal)
+{
+    vector<int> current_clause = clauses[clause_index];
+    int watching_index;// 0 or 1 in 2-literal watching
+    for(int i=0;i<2;i++)
+    {
+        if(current_clause[two_literal_watching[clause_index][i]]==assigned_literal)
+            watching_index=i;
+    }
+    int another_watching_index = 1-watching_index;
+    //int done_variable = current_clause[two_literal_watching[current_clause][watching_index]];
+    for(int i=0;i<current_clause.size();i++)
+    {
+        if(i==two_literal_watching[clause_index][0]||i==two_literal_watching[clause_index][1])continue;
+        if(valued(current_clause[i])==0)continue;
+        //find case 1 literal
+        two_literal_watching[clause_index][watching_index] = i;//update watching
+        if(current_clause[i] < 0)
+            negative_watch[abs(current_clause[i])].push_back(clause_index);
+        else
+            positive_watch[abs(current_clause[i])].push_back(clause_index);
+        return 1;// case 1 return
+    }
+    if(valued(current_clause[two_literal_watching[clause_index][another_watching_index]])==-1) //case 2
+    {
+        // imply;
+        return 2;
+    }
+    if(valued(current_clause[two_literal_watching[clause_index][another_watching_index]])==1) //case 3
+    {
+        //nothing to do
+        return 3;
+    }
+    return 4;//conflict
+}
+
+int sat_solver::BCP(int depth,int decide_literal)
+{
+    //cout<<"BCP, current depth and literal : "<<depth<<"   "<<decide_literal<<"\n\n";
+    queue<pair<int,vector<int>>> imply;
+    if(depth>1)
+    {
+        imply.push(pair<int,vector<int>>(decide_literal,vector<int>()));
+    }
+    else if(depth==1)
+    {
+        for(int num:single_literal)
+        {
+            imply.push(pair<int,vector<int>>(num,vector<int>()));
+        }
+    }
+    while(!imply.empty())
+    {
+        pair<int,vector<int>> next_imply = imply.front();imply.pop();
+        int literal = next_imply.first;
+        int variable = abs(literal);
+        if(valued(literal)==1)continue;// repeat the same imply
+        if(valued(literal)==0)//conflict
+        {
+            if(depth==1)return -1;
+            antecedent[variable]=next_imply.second;
+            return FirstUIP(antecedent[variable],depth);
+        }
+        assignment[variable].value = (literal>0)?1:0;
+        assignment[variable].depth = depth;
+        assignment[variable].order = assigned_number;
+        assigned_number++;
+        antecedent[variable]=next_imply.second;//this clause imply this variable
+
+        if(assignment[variable].value==1)
+        {
+            for(int i=negative_watch[variable].size()-1;i>=0;i--)
+            {
+                int kase = four_case(negative_watch[variable][i],-variable);
+                if(kase == 1)
+                {
+                    negative_watch[variable].erase(negative_watch[variable].begin()+i);//remove this watching clause.
+                    continue;
+                }
+                if(kase == 2)
+                {
+                    int clause_index = negative_watch[variable][i];
+                    int imply_literal;
+                    for(int j=0;j<2;j++)
+                    {
+                        if(abs(clauses[clause_index][two_literal_watching[clause_index][j]])!=variable)
+                           imply_literal = clauses[clause_index][two_literal_watching[clause_index][j]];
+                    }
+                    imply.push({imply_literal,clauses[clause_index]});
+                }
+                if(kase == 3)//this clause is resolved.
+                {
+                    continue;
+                }
+                if(kase == 4)//conflict
+                {
+                    if(depth==1)return -1;
+                    return FirstUIP(clauses[negative_watch[variable][i]],depth);
+                }
+            }
+        }
+        else
+        {
+            for(int i=positive_watch[variable].size()-1;i>=0;i--)
+            {
+                int kase = four_case(positive_watch[variable][i],variable);
+                if(kase == 1)
+                {
+                    positive_watch[variable].erase(positive_watch[variable].begin()+i);//remove this watching clause.
+                    continue;
+                }
+                if(kase == 2)
+                {
+                    int clause_index = positive_watch[variable][i];
+                    int imply_literal;
+                    for(int j=0;j<2;j++)
+                    {
+                        if(abs(clauses[clause_index][two_literal_watching[clause_index][j]])!=variable)
+                           imply_literal = clauses[clause_index][two_literal_watching[clause_index][j]];
+                    }
+                    imply.push({imply_literal,clauses[clause_index]});
+                }
+                if(kase == 3)
+                {
+                    continue;
+                }
+                if(kase == 4)//conflict
+                {
+                    if(depth==1)return -1;
+                    return FirstUIP(clauses[positive_watch[variable][i]],depth);
+                }
+            }
+        }
+    }
     return depth;
 }
 
-int FirstUIP(vector<int> conf, int depth)
+int sat_solver::DPLL(int current_depth,int decide_literal)
 {
-    int cnt, l_idx, l_lit;
-    while (1)
+    current_depth = BCP(current_depth,decide_literal);
+    /*for(int i=1;i<=maxindex;i++)
     {
-        cnt = 0;
-        for (int lit : conf)
-            if (res[abs(lit)] != -1 && dep[abs(lit)] == depth)
-                cnt++;
-        if (cnt <= 1)break;
-        l_lit = -1; l_idx = -1;
-        for (int lit : conf)
-            if (d_o[abs(lit)] > l_idx)
-            {
-                l_idx = d_o[abs(lit)];
-                l_lit = lit;
-            }
-        conf = resolve(conf, clauses[antecedent[abs(l_lit)]]);
-    }
-    if (conf.size() == 0)return 0;
-    l_lit = -1; l_idx = -1;
-    for (int lit : conf)
-        if (res[abs(lit)] != -1 && d_o[abs(lit)] > l_idx && dep[abs(lit)] != depth)
-        {
-            l_idx = d_o[abs(lit)];
-            l_lit = lit;
-        }
-    return Addcla(conf, dep[abs(l_lit)]);//back to dep[l_lit]
+        cout<<"\n----------\n";
+        cout<<assignment[i].value<<"  |  "<<assignment[i].order<<"  |  "<<assignment[i].depth;
+    }*/
+    if(current_depth<0)return 0;
+    if(check_solve())return 1;
+
+    int next_decide = vsids_pick();
+    vsids_value_decay();
+    return DPLL(current_depth+1,next_decide);
 }
 
-int four_case(int Idx, int c_idx, int d_idx, vector<Decide>& nxt_dedu)
+bool sat_solver::check_solve()//OK
 {
-    int lit = clauses[c_idx][d_idx];
-    int d_val = res[abs(lit)];
-    int ano_idx, w_idx;
-    (d_idx == watching[c_idx][0]) ? w_idx = 0 : w_idx = 1;
-    ano_idx = watching[c_idx][1 - w_idx];
-    for (int k = 0; k < clauses[c_idx].size(); k++)
-    {
-        if (k == d_idx || k == ano_idx)continue;
-        if (Val(clauses[c_idx][k]) == 0)continue;
-        if (!d_val)
-            pos_watch[abs(lit)].erase(pos_watch[abs(lit)].begin() + Idx);
-        else
-            neg_watch[abs(lit)].erase(neg_watch[abs(lit)].begin() + Idx);
+    bool ans = 1;
+    for(int i=0;i<clauses.size();i++)
+        ans=ans&((valued(clauses[i][two_literal_watching[i][0]])==1)||(valued(clauses[i][two_literal_watching[i][1]])==1));
 
-        lit = clauses[c_idx][k];
-        watching[c_idx][w_idx] = k;
-        lit < 0 ? neg_watch[abs(lit)].push_back(c_idx) : pos_watch[abs(lit)].push_back(c_idx);
-        return 1;//case 1
-    }
-    lit = clauses[c_idx][ano_idx];
-    if (Val(lit) == -1)//case 2
-    {
-        lit < 0 ? nxt_dedu.push_back({ abs(lit),0,c_idx }) : nxt_dedu.push_back({ abs(lit),1,c_idx });
-        return 1;
-    }
-    if (Val(lit) == 1) return 1;//case 3
-    return 0;
+    return ans;
 }
 
-void backtrack(int depth)
+int main()
 {
-    depth = max(depth, 1);
-    Decide tp;
-    for (int i = decide.size() - 1; i >= 0; i--)
-    {
-        tp = decide[i];
-        if (tp.depth > depth)
-        {
-            res[tp.var] = -1;
-            dep[tp.var] = 0;
-            d_o[tp.var] = -1;
-            antecedent[tp.var] = -1;
-            decide.erase(decide.begin() + i);
-        }
-    }
-    return;
-}
 
-int DPLL()
-{
-    vector<Decide> imply, nxt_dedu;
-    int bk;
-    int idx;
-    int kase;
-    int depth = 0;
-    int cnt = 0;
-    while (1)
-    {
-        cnt++;
-        //if(cnt%2000==0)cout<<cnt<<endl;
-        int conf = 0;
-        depth++;
-        if (depth == 1)
-        {
-            Cnt = 0;//restart
-            for (Decide i : decide)
-            {
-                imply.push_back(i);
-                res[i.var] = i.state;
-                d_o[abs(i.var)] = Cnt++;
-                dep[abs(i.var)] = 1;
-                antecedent[abs(i.var)] = -1;
-            }
-        }
-        else
-        {
-            int p = vsids();
-            if (p == 0)return 0;
-            p < 0 ? imply.push_back({ abs(p),0,-1 }) : imply.push_back({ abs(p),1,-1 });
-        }
-        while (!imply.empty())
-        {
-            conf = 0;
-            for (Decide i : imply)
-            {
-                int imp = i.var;
-                res[imp] = i.state;
-                if (!dep[imp])
-                {
-                    d_o[imp] = Cnt++;
-                    dep[imp] = depth;
-                    antecedent[imp] = i.depth;
-                    decide.push_back({ i.var,i.state,depth });
-                }
-                if (!res[imp])
-                {
-                    for (int Idx = pos_watch[imp].size() - 1; Idx >= 0; Idx--)
-                    {
-                        idx = pos_watch[imp][Idx];
-                        if (imp == abs(clauses[idx][watching[idx][0]]))
-                            kase = four_case(Idx, idx, watching[idx][0], nxt_dedu);
-                        else
-                            kase = four_case(Idx, idx, watching[idx][1], nxt_dedu);
-                        if (kase)continue;
-                        else
-                        {
-                            if (depth == 1) return 0;
-                            conf = 1;
-                            bk = FirstUIP(clauses[idx], depth);
-                            if (bk <= 0)return 0;
-                            break;
-                        }
-                    }
-                    if (conf)break;
-                }
-                else
-                {
-                    for (int Idx = neg_watch[imp].size() - 1; Idx >= 0; Idx--)
-                    {
-                        idx = neg_watch[imp][Idx];
-                        if (imp == abs(clauses[idx][watching[idx][0]]))
-                            kase = four_case(Idx, idx, watching[idx][0], nxt_dedu);
-                        else
-                            kase = four_case(Idx, idx, watching[idx][1], nxt_dedu);
-                        if (kase)continue;
-                        else
-                        {
-                            if (depth == 1) return 0;
-                            conf = 1;
-                            bk = FirstUIP(clauses[idx], depth);
-                            if (bk <= 0)return 0;
-                            break;
-                        }
-                    }
-                    if (conf)break;
-                }
-            }
-            if (conf)break;
-            imply.clear();
-            for (Decide i : nxt_dedu)
-            {
-                int rep = 0;
-                for (Decide j : imply)
-                {
-                    if (i.var == j.var)
-                    {
-                        rep = 1;
-                        break;
-                    }
-                }
-                if (!rep)imply.push_back(i);
-            }
-            nxt_dedu.clear();
-        }
-        if (check_sol())return 1;
-        if (conf)
-        {
-            if (depth - bk > 50)bk = 1;
-            bk--;
-            backtrack(bk);
-            depth = bk;
-            imply.clear();
-            nxt_dedu.clear();
-        }
-    }
-    return 1;
-}
+    vector<vector<int>> clauses;
+    int maxindex;
+    parse_DIMACS_CNF(clauses,maxindex,"par32-1.cnf");
 
-void check()
-{
-    int ans = 1;
-    for (vector<int> C : clauses)
-    {
-        int ok = 0;
-        for (int lit : C)
-        {
-            if (Val(lit) != 0)
-            {
-                ok = 1;
-                break;
-            }
-        }
-        ans = ans & ok;
-    }
-    if (ans)cout << "Check ok\n";
-    else cout << "Fail\n";
-    return;
-}
-
-int main(int argc, char* argv[])
-{
-    init();
-    string filename = argv[1];
-    parse_DIMACS_CNF(clauses, maxIdx, argv[1]);
-    filename = filename.substr(0, filename.size() - 3);
-    filename = filename + "sat";
-    freopen(filename.c_str(), "w", stdout);
-    cout << "s ";
-    if (!prepare())cout << "UNSATISFIABLE\n";
+    sat_solver solver(clauses,maxindex,1.2,20);
+    if(!solver.prepare())cout<<"UNSAT\n";
     else
     {
-        int ans = DPLL();
-        if (ans)
+        if(solver.DPLL(1,0))
         {
-            cout << "SATISFIABLE\n";
-            cout << "v ";
-            for (int i = 1; i <= maxIdx; i++)
+            cout<<"SAT\n";
+            for(int i=1;i<=maxindex;i++)
             {
-                if (res[i] == 0)cout << "-";
-                cout << i << " ";
+                if(solver.assignment[i].value==0)cout<<"-";
+                cout<<i<<" ";
             }
-            cout << endl;
         }
-        else cout << "UNSATISFIABLE\n";
+        else cout<<"UNSAT\n";
     }
-    fclose(stdout);
 
-    return 0;
+	return 0;
 }
