@@ -31,9 +31,12 @@ variable : without sign.
   2. If it contain x and x' simultaneously, then this clause always true, delete it.
   3. Delete the repeat literal. 
 * VSIDS
-  1. Count appearance frequency of each literal as it's vsids value.
-  2. Each time when we pick up a variable to decide, divide vsids value of each literal by a constant.
+  * Count appearance frequency of each literal as it's vsids value.
 * antecedent
   * Recode what clause deduce the variable, so the variables we decide do not have antecedent.
 
-The benchmarks are this code can pass, the code still has some bugs.
+Two mechanism :
+  1. VSIDS value decay : Every 50 times conflicts we encounter, devide all VSIDS value by a decay constant.
+  2. Restart : Every 200 times conflicts we encounter, restart.
+
+The benchmarks are this code can pass, the code still has some bugs(?).
