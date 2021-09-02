@@ -34,7 +34,7 @@ public:
         assigned_number = 0;
         decay_constant = Decay_constant;
         max_clause_size = Max_clause_size;
-
+        conflict_counter = 0;
     }
     int valued(int);
     void vsids_value_decay();
@@ -65,6 +65,7 @@ public:
 
     double decay_constant;
     int max_clause_size;
+    int conflict_counter;
 };
 
 int sat_solver::valued(int literal)
@@ -88,7 +89,7 @@ int sat_solver::vsids_pick()
     {
         if (assignment[(i + 1) / 2].value == -1) //unassigned
         {
-            if (vsids_value[i] > vsids_value[candidate_variable])
+            if (vsids_value[i] >= vsids_value[candidate_variable])
                 candidate_variable = i;
         }
     }
@@ -164,10 +165,7 @@ bool sat_solver::prepare()
 
 int sat_solver::FirstUIP(vector<int> conflict_clause, int current_depth)
 {
-    /*cout<<"FirstUIP   :";
-    for(int num:conflict_clause)cout<<num<<" ";
-    cout<<"\n\n";*/
-    while (1)//page 70
+    while (1)
     {
         int current_depth_assigned = 0;
         for (int literal : conflict_clause)
@@ -185,7 +183,7 @@ int sat_solver::FirstUIP(vector<int> conflict_clause, int current_depth)
         }
         conflict_clause = resolve_clauses(conflict_clause, antecedent[last_assigned], last_assigned);
     }
-    if (conflict_clause.empty())return -1;//conflict (?)
+    if (conflict_clause.empty())return -1;
 
     return add_new_clause(conflict_clause);
 }
@@ -213,6 +211,9 @@ int sat_solver::add_new_clause(vector<int> new_clause)
     backtrack(second_deepest);
     //add new clause
     sort(new_clause.begin(), new_clause.end(), compare);
+    //update VSIDS value
+    for(int literal:new_clause)
+        (literal > 0) ? vsids_value[abs(literal) * 2 - 1] += 1 : vsids_value[abs(literal) * 2] += 1;
     if (!find_clauses[new_clause])
     {
         find_clauses[new_clause] = 1;
@@ -236,10 +237,9 @@ int sat_solver::add_new_clause(vector<int> new_clause)
 
 void sat_solver::backtrack(int goal_layer)
 {
-    //cout<<"backtrack to "<<goal_layer<<"\n\n";
     for (int num = 1; num <= maxindex; num++)
     {
-        if (assignment[num].depth >= goal_layer)// >?>=?
+        if (assignment[num].depth >= goal_layer)//
         {
             assigned_number--;
             assignment[num] = { -1,-1,-1 };
@@ -258,7 +258,6 @@ int sat_solver::four_case(int clause_index, int assigned_literal)
             watching_index = i;
     }
     int another_watching_index = 1 - watching_index;
-    //int done_variable = current_clause[two_literal_watching[current_clause][watching_index]];
     for (int i = 0; i < current_clause.size(); i++)
     {
         if (i == two_literal_watching[clause_index][0] || i == two_literal_watching[clause_index][1])continue;
@@ -286,7 +285,6 @@ int sat_solver::four_case(int clause_index, int assigned_literal)
 
 int sat_solver::BCP(int depth, int decide_literal)
 {
-    //cout<<"BCP, current depth and literal : "<<depth<<"   "<<decide_literal<<"\n\n";
     queue<pair<int, vector<int>>> imply;
     if (depth > 1)
     {
@@ -387,19 +385,24 @@ int sat_solver::BCP(int depth, int decide_literal)
 
 int sat_solver::DPLL(int current_depth, int decide_literal)
 {
-    cout << assigned_number << endl;
-    current_depth = BCP(current_depth, decide_literal);
-    /*for(int i=1;i<=maxindex;i++)
-    {
-        cout<<"\n----------\n";
-        cout<<assignment[i].value<<"  |  "<<assignment[i].order<<"  |  "<<assignment[i].depth;
-    }*/
-    if (current_depth < 0)return 0;
+    int goal_depth = BCP(current_depth, decide_literal);
+    if(goal_depth < current_depth)
+        conflict_counter++;
+
+    if (goal_depth < 0)return 0;
     if (check_solve())return 1;
 
+    if(conflict_counter && conflict_counter % 50 == 0)
+        vsids_value_decay();
     int next_decide = vsids_pick();
-    vsids_value_decay();
-    return DPLL(current_depth + 1, next_decide);
+
+    if(conflict_counter && conflict_counter % 200 == 0)//random restart
+    {
+        backtrack(0);
+        conflict_counter = 0;
+    }
+
+    return DPLL(goal_depth + 1, next_decide);
 }
 
 bool sat_solver::check_solve()
@@ -418,7 +421,7 @@ int main()
     int maxindex;
     parse_DIMACS_CNF(clauses, maxindex, "par32-1.cnf");
 
-    sat_solver solver(clauses, maxindex, 1.2, 20);
+    sat_solver solver(clauses, maxindex, 2, 20);
     if (!solver.prepare())cout << "UNSAT\n";
     else
     {
