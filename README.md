@@ -33,7 +33,7 @@ variable : without sign.
 * VSIDS
   * Count appearance frequency of each literal as it's vsids value.
 * antecedent
-  * Recode what clause deduce the variable, so the variables we decide do not have antecedent.
+  * Record what clause deduce the variable, so the variables we decide do not have antecedent.
 
 Two mechanism :
   1. VSIDS value decay : Every 50 times conflicts we encounter, devide all VSIDS value by a decay constant.
