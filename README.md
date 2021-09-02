@@ -39,4 +39,7 @@ Two mechanism :
   1. VSIDS value decay : Every 50 times conflicts we encounter, devide all VSIDS value by a decay constant.
   2. Restart : Every 200 times conflicts we encounter, restart.
 
-The benchmarks are this code can pass, the code still has some bugs(?).
+The benchmarks are this code can pass, the code still has some bugs(?).  
+Some idea:
+* We can elimate those fixed variable, right? If we fixed x=1, then all clauses contain x can be deleted(always true), and all clauses contains x' can takeout this literal.  
+* How to deal with large clauses?(containing k more literal) Ignore it? 
